@@ -1,0 +1,48 @@
+"""
+This class implements a simple self healing leader election algorithm which is a modded version
+of the RAFT distributed consensus algorithm, which is fully tolerant. I added a constraint such that
+AT LEAST 51% of the Nodes participating in the election must be connected and remain connected throughout
+the election process, and after, so that we always have a majority acceptor set
+
+A failure dectector is also implemented which sends periodic heartbeats (PULSE messages) from each of the
+FOLLOWERS to the LEADER, and checks if the LEADER successfully responds to a majority of them. If this fails 
+it indicates that the LEADER is dead, and the entire system is switched back to the ELECT state to pick a new LEADER
+
+Note that each node has its own controllerID but this election state is synchronized across all the nodes in the network,
+this is a bit of a design glitch, I'll try to correct this.
+
+    - znetwork: an object which contains an abstraction of the underlying network mesh containing all the nodes
+    - async_ election: an object of this class containing the state of the entire election system
+    - election_priorities: list which can be used to CHEAT/OVERRIDE the LEADER elected democratically by the system, in case
+    of emergencies (HITLER mode)
+    
+    Election Variables:
+    - controller_id: string which contains the controller ID of this application 
+    - leader: string which contains the controllerID of the leader of the system
+    - temp_leader: string which contains the elected leader before the acceptance phase
+    - connection_dict: dict which holds controllerID:NetState mapping for all the participants of the election
+    - current_state: variable which holds the current ElectionState of the system
+    - relax: int which holds the time for which it should be spinning in the rest state
+    
+    Election Messages:
+    - ACK: string message to acknowledge any message received
+    - PULSE: string message which is used to send a heartbeat message
+    - YOU?: string message which is used in the check for leader function to check if a node is the leader
+    - NO: string message which is used in case of a failure or exception'
+    - IWON: string message which is sent by the recently elected leader to all the followers (phase I)
+    - LEADER: string message which is sent by the leader which won the election to all the followers (phase II)
+    - LEADOK: string message which is sent by each of the acceptors/followers to ack the leader (phase II)
+    - SETLEAD: string message which is sent by the leader at the end of the three phase commit to indicate that it will set itself
+    as the network wide leader (phase III)
+    
+
+"""
+
+__author__ = "Bhargav Srinivasan"
+__copyright__ = "Copyright 2024, Earth"
+__email__ = "bhargav.srinivasan92@gmail.com"
+__version__ = "1.1.0"
+
+
+import logging
+import os
