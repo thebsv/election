@@ -1,5 +1,5 @@
 """
-This class implements a simple self healing leader election algorithm which is a modded version
+This module implements a simple self healing leader election algorithm which is a modded version
 of the RAFT distributed consensus algorithm, which is fully tolerant. I added a constraint such that
 AT LEAST 51% of the Nodes participating in the election must be connected and remain connected throughout
 the election process, and after, so that we always have a majority acceptor set
@@ -46,3 +46,45 @@ __version__ = "1.1.0"
 
 import logging
 import os
+
+
+class AsyncElection:
+
+    _instance = None
+
+
+    def __new__(cls, *args, **kwargs):
+        if not cls._instance:
+            cls._instance = super(AsyncElection, cls).__new__(cls, *args, **kwargs)
+        return cls._instance
+    
+
+    def __init__(self):
+        pass
+
+
+    def get_temp_leader(self) -> str:
+        pass
+    
+    
+    def set_temp_leader(self, temp_leader: str):
+        pass
+    
+
+    def get_timestamp(self) -> str:
+        pass
+    
+
+    def set_timestamp(self, timestamp: str):
+        pass
+
+
+    def get_leader(self) -> str:
+        pass
+    
+
+    def set_leader(self):
+        pass
+
+
+ael = AsyncElection()

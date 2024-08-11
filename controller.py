@@ -18,3 +18,10 @@ __version__ = "1.1.0"
 import logging
 import os
 import threading
+
+
+class Controller:
+    pass
+
+
+controller = Controller()

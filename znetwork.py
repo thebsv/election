@@ -51,12 +51,12 @@ import os
 import zmq
 import zmq.asyncio
 
+# importing the object from the election class, since it is a singleton
+# singleton DI of higher level class -> into N lower level classes (that's the pattern)
+from election import ael
+
+
 from typing import List
-
-
-CONFIG_FILE = "server.config"
-NO_QUEUE = 1
-SO_LINGER = 0
 
 
 """
@@ -148,10 +148,22 @@ def main1():
         os._exit(1)
 """
 
+# Constants belonging to the ZNode class
+CONFIG_FILE = "server.config"
+NO_QUEUE = 1
+SO_LINGER = 0
+
+ACK = "ACK"
+NO = "NO"
+LEADOK = "LEADOK"
+DONTCARE = "DONTCARE"
+NONE = "NONE"
+
 
 class ZNode:
+    
 
-    def __init__(self, server_port: str) -> None:
+    def __init__(self, server_port: str, controller_id: str) -> None:
         self.server_port = server_port
 
         self.server_socket = None
@@ -160,13 +172,15 @@ class ZNode:
         self.node_list = self._parse_configuration(CONFIG_FILE)
         self._create_client_sockets(self.server_port, self.node_list)
 
+        self.async_election = ael
+        self.controller_id = controller_id
+
     
     def _parse_configuration(self, config_file: str) -> List[str]:
         servers = []
         with open(config_file, "r") as config:
             for line in config:
-                line = line.strip()
-                servers.append(line)
+                servers.append(line.strip())
         return servers
 
 
@@ -196,7 +210,84 @@ class ZNode:
 
         return csocket
 
+
+    def _process_server_message(self, message: str) -> str:
+        switch = message[0]
+
+        try:
+            if switch == 'I':
+                _, temp_leader, timestamp = switch.split(" ")
+                # This is the IWON message, so we need to set a temp leader and the timestamp
+                # at which this message was received (to sequence it correctly to this particular 3PC)
+                self.async_election.set_temp_leader(temp_leader)
+                self.async_election.set_timestamp(timestamp)
+                return ACK
+            
+            elif switch == 'L':
+                _, temp_leader, timestamp = switch.split(" ")
+                # This is the LEADER message, which upon receipt, we need to use to either retrieve an exisitng
+                # leader or if a current leader does not exist, meaning the election is in progress, then return no
+                if self.async_election.get_temp_leader() == temp_leader and self.async_election.get_timestamp() == timestamp:
+                    return LEADOK
+                else:
+                    # this is done to avoid out of sequence leaders, in case the above timestamp check condition fails,
+                    # we need to reset the leader to none and start the election again
+                    self.async_election.set_temp_leader(NONE)
+                    self.async_election.set_leader(NONE)
+                    return NO
+            
+            elif switch == 'S':
+                _, temp_leader, timestamp = switch.split(" ")
+                # This is the SETLEAD message, in this case we need to check if this controller id is not the leader, because
+                # we only self set leader when a majority of acceptors have accepted it. This is only for the followers.
+                if self.async_election.get_temp_leader() != self.controller_id:
+                    # If both checks pass, this is the temp leader that was set by the previous phase, and it is in sequence,
+                    # then set this temp leader as the leader
+                    if self.async_election.get_temp_leader() == temp_leader and self.async_election.get_timestamp() == timestamp:
+                        self.async_election.set_leader(temp_leader)
+                        self.async_election.set_temp_leader(NONE)
+                        return ACK
+                    else:
+                        # If one of the above checks fail, meaning it is not 3PC, or it is out of sequence, then reset the leader
+                        self.async_election.set_temp_leader(NONE)
+                        self.async_election.set_leader(NONE)
+                        return NO
+                else:
+                    self.async_election.set_temp_leader(NONE)
+                    self.async_election.set_leader(NONE)
+                    return NO
+
+            elif switch == 'Y':
+                _, temp_leader, timestamp = switch.split(" ")
+                # This is the YOU? message, which is used to query this instance if it is the leader, and its ID is appended 
+                # with the temp leader ID that was set along with the YOU? message, and ideally these two should match if it is the leader
+                if self.async_election.get_leader() == self.controller_id:
+                    return self.controller_id + " " + temp_leader
+                else:
+                    return NO
+                
+            elif switch == 'H':
+                _, temp_leader, timestamp = switch.split(" ")
+                # This is the heartbeat message, the response to which is an ack plus the current timestamp, if a current leader
+                # has been set, otherwise return no
+                if self.async_election.get_leader() == temp_leader:
+                    return ACK + timestamp
+                else:
+                    return NO
+            
+            elif switch == 'P':
+                # Response to an incoming PULSE message, return ACK
+                return ACK
+            
+            elif switch == 'm':
+                # Response to an incoming m message, test message, return ACK
+                return ACK
+            
+        except Exception as e:
+            print(f"Error while processing the message received by the server {message}: {str(e)}")
+            return DONTCARE
     
+
     async def server_loop(self) -> None:
         context = zmq.asyncio.Context()
         self.server_socket = context.socket(zmq.REP)
@@ -206,16 +297,20 @@ class ZNode:
 
         try:
             while True:
+
                 try:
                     message = await self.server_socket.recv_string()
                     print(f"Received message: {message}")
                 except Exception as e:
                     print(f"Exception: {str(e)}")
 
+                reply = self._process_server_message(message)
+
                 try:
-                    await self.server_socket.send_string("ACK")
+                    await self.server_socket.send_string(reply)
                 except Exception as e:
                     print(f"Exception while sending from the server: {str(e)}")
+                
         except Exception as e:
             print(f"Exiting server... {str(e)}")
         finally:
@@ -242,16 +337,16 @@ class ZNode:
 async def main():
     try:
         # Test server loop run 5252, 5253
-        node1 = ZNode("5252")
-        node2 = ZNode("5253")
+        node1 = ZNode("5252", "1")
+        node2 = ZNode("5253", "2")
         
         t1 = asyncio.create_task(node1.server_loop()) 
         t2 = asyncio.create_task(node2.server_loop())
 
         # Test client socket, send a message to 5253
-        rep = await node1.send_message("5253", "hello")
+        rep = await node1.send_message("5253", "mhello")
         print(f"node1 to node2 reply: {str(rep)}")
-        rep = await node2.send_message("5252", "hello")
+        rep = await node2.send_message("5252", "mhello")
         print(f"node2 to node1 reply: {str(rep)}")
 
         await t1
