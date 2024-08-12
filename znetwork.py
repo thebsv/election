@@ -176,12 +176,10 @@ class ZNode:
         self.controller_id = controller_id
 
     
-    def _parse_configuration(self, config_file: str) -> List[str]:
-        servers = []
+    def _parse_configuration(self, config_file: str):
         with open(config_file, "r") as config:
             for line in config:
-                servers.append(line.strip())
-        return servers
+                self.node_list.append(line.strip())    
 
 
     def _create_client_sockets(self, server_port: str, node_list: List[str]) -> None:
@@ -279,8 +277,8 @@ class ZNode:
                 # Response to an incoming PULSE message, return ACK
                 return ACK
             
-            elif switch == 'm':
-                # Response to an incoming m message, test message, return ACK
+            elif switch == 'M':
+                # Response to an incoming M message, return ACK
                 return ACK
             
         except Exception as e:
@@ -334,6 +332,97 @@ class ZNode:
                 print(f"Error closing client socket: {str(e)}")
 
 
+"""
+The network uses the node class, and it implements convenience functions for the
+election class that will maintain persistent mesh connections between all the nodes.
+
+A majority variable is used and is set to 51% of acceptors that need to accept this node
+as the new leader before it is set to be so. The number of total rounds for election will 
+also be set equal to the total number of nodes participating in the election, so that the failure
+of a node does not affect the process and it is fully fault tolerant.
+
+Over here, we read all the nodes from the config file and make a ZNode object for it, with its own
+controller ID and also insert this into the respective connection tracker mechanisms designed below.
+
+
+
+
+"""
+
+MAJORITY = 0.51
+
+
+class BidirectionalDict:
+    """
+    A new data structure that I made to hold the connection: controllerID associations.
+    """
+
+    
+    def __init__(self):
+        self.forward = {}
+        self.reverse = {}
+    
+
+    def put(self, key: object, value: object):
+        self.forward[key] = value
+        self.reverse[value] = key
+    
+
+    def get_key(self, key: object) -> object:
+        if key in self.forward:
+            return self.forward[key]
+        else:
+            raise Exception("Value for the corresponding key not present in map!")
+    
+
+    def get_value(self, value: object) -> object:
+        if value in self.reverse:
+            return self.reverse[value]
+        else:
+            raise Exception("Key for the corresponding value not present in map!")
+    
+    
+    def delete_key(self, key: object):
+        if key in self.forward:
+            value = self.forward[key]
+            del self.forward[key]
+            del self.reverse[value]
+        else:
+            raise Exception("Key not present in map!")
+    
+
+    def delete_value(self, value: object):
+        if value in self.reverse:
+            key = self.reverse[value]
+            del self.reverse[value]
+            del self.forward[key]
+        else:
+            raise Exception("Key not present in map!")
+
+            
+
+class ZNetwork:
+
+
+    def __init__(self):
+        self.server_list = []
+        self.connect_set = set()
+        self.socket_dict = {}
+        self.connect_dict = {}
+        self.controllerid_net = BidirectionalDict()
+        self.delmark = {}
+        self.total_rounds = len(self.server_list) * MAJORITY
+
+        self._parse_server_config(CONFIG_FILE)
+    
+
+    def _parse_server_config(self, config_file: str):
+        with open(config_file, "r") as config:
+            for line in config:
+                self.server_list.append(line.strip())
+
+
+
 async def main():
     try:
         # Test server loop run 5252, 5253
@@ -344,9 +433,9 @@ async def main():
         t2 = asyncio.create_task(node2.server_loop())
 
         # Test client socket, send a message to 5253
-        rep = await node1.send_message("5253", "mhello")
+        rep = await node1.send_message("5253", "Mhello")
         print(f"node1 to node2 reply: {str(rep)}")
-        rep = await node2.send_message("5252", "mhello")
+        rep = await node2.send_message("5252", "Mhello")
         print(f"node2 to node1 reply: {str(rep)}")
 
         await t1
