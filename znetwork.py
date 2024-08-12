@@ -410,17 +410,18 @@ class ZNetwork:
                 self.server_list.append(port)
                 self.controllerID_port[port] = cid
                 cid += 1
-        
-        # nothing is connected yet, fill the set with all ports/nodes
-        self.connect_set = set([ port for port in self.server_list ])
+    
     
 
-    def block_until_connected(self) -> bool:
+    async def block_until_connected(self) -> bool:
         self._clean_state()
 
-        while len(self.socket_dict) < self.majority:
+        # nothing is connected yet, fill the set with all ports/nodes
+        self.connect_set = set([ port for port in self.server_list ])
+
+        while len(self.socket_dict) >= self.majority:
             try:
-                self._connect_clients()
+                await self._connect_clients()
                 sleep(1)
             except Exception as e:
                 print(f"Block Until Connected errored out: {str(e)}")
@@ -445,35 +446,37 @@ class ZNetwork:
         self.socket_dict = {}
         self.connect_dict = {}
 
-        self.connect_set = set()
+        self.connect_set = set([ port for port in self.server_list ])
 
         self.delete_marker = []
 
     
-    def check_for_new_connections(self):
-        self._expire_old_connections()
-        self.connect_set = set()
-        self._connect_clients()
-
-
-    async def test_connection(self, port: str, message: str) -> str:
-        # send a pulse to check for connectivity
-        client_sock.send_message(port, PULSE)
-        reply = await client_sock.recv_message()
-        return reply
+    async def check_for_new_connections(self) -> Dict[str, object]:
+        await self._expire_old_connections()
+        self.connect_set = set([ port for port in self.server_list ])
+        ret = await self._connect_clients()
+        return ret
     
-
+    
     async def _connect_clients(self) -> Dict[str, object]:
         diff_set = self.connect_set.difference(set(self.socket_dict.keys()))
+        print(F"diff_set: ", str(diff_set))
+
 
         for port in diff_set:
             cid = self.controllerID_port[port]
             client_socket = ZNode(port, cid)
             asyncio.create_task(client_socket.server_loop())
+
+            print(f"socket: {client_socket.__dict__}")
             
             # check the connection
             try:
-                reply = self.test_connection()
+                # send a pulse to check for connectivity
+                client_sock.send_message(port, PULSE)
+                reply = await client_sock.recv_message()
+
+                print(f"reply: {reply}")
 
                 # verify the ack, and add it to the socket dict
                 # and the connect dict, if not, delete the socket
@@ -498,12 +501,15 @@ class ZNetwork:
         return self.connect_dict
     
 
-    def _expire_old_connections(self) -> Dict[str, object]:
+    async def _expire_old_connections(self) -> Dict[str, object]:
         for port, client_socket in self.socket_dict.items():
             try:
                 rand_index = randint(0, len(self.server_list) - 1)
                 random_port = self.server_list[rand_index]
-                reply = self.test_connection()
+                
+                # send a pulse to check for connectivity
+                client_sock.send_message(port, PULSE)
+                reply = await client_sock.recv_message()
 
                 if reply != ACK:
                     del client_socket
@@ -544,10 +550,10 @@ class ZNetwork:
 async def main_network():
     try:
         znet = ZNetwork()
-        znet.block_until_connected() # has to return all the server tasks
+        await znet.block_until_connected()
         # await all the server tasks
-        znet.check_for_new_connections()
-        print(f"connected nodes: {znet.socket_dict}")
+        ret = await znet.check_for_new_connections()
+        print(f"connected nodes: {ret}")
     except Exception as e:
         print(f"Could not start network: {str(e)}")
 
@@ -575,6 +581,6 @@ async def main_node():
 
 
 if __name__ == "__main__":
-    asyncio.run(main_node())
-    # asyncio.run(main_network())
+    # asyncio.run(main_node())
+    asyncio.run(main_network())
     # test_bidi()
