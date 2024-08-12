@@ -11,7 +11,7 @@ are used to connect all the entities that participate in the election process.
         - connect_set: set which contains all the other connected nodes (which will be tested periodically)
         - socket_dict: ordered dict of port:Socket objects of all the nodes, irrespective of if they are active or not
         - connect_dict: ordered dict of port:NetState which tells me if each of the nodes in the socket_dict are active or not
-        - controllerid_net: bidi dict of controller_ID:network_port of each of the nodes involved in this network
+        - controllerid_port: bidi dict of controller_ID:network_port of each of the nodes involved in this network
         - delmark: dict that holds all the nodes which have expired sockets/sockets that aren't active and need to be cleaned/deleted
         - majority: the minimum number of nodes in the network that need to accept the new leader, currently set to 51%
         - total_rounds: the number of election rounds that are carried out, set to len(server_list) because every node elected as
@@ -348,19 +348,19 @@ controller ID and also insert this into the respective connection tracker mechan
 
 
 """
+from collections import OrderedDict
+import ctypes
 
-MAJORITY = 0.51
+
+MAJORITY =  0.51
+
+"""
+class BidiDict:
 
 
-class BidirectionalDict:
-    """
-    A new data structure that I made to hold the connection: controllerID associations.
-    """
-
-    
     def __init__(self):
-        self.forward = {}
-        self.reverse = {}
+        self.forward = OrderedDict()
+        self.reverse = OrderedDict()
     
 
     def put(self, key: object, value: object):
@@ -398,6 +398,65 @@ class BidirectionalDict:
             del self.forward[key]
         else:
             raise Exception("Key not present in map!")
+"""
+
+class BidiDict:
+    """
+    A new data structure that I made to hold the connection: controllerID associations.
+    """
+
+
+    def __init__(self):
+        self.map = {}
+        self.lookup = []
+        self.index = 0
+    
+
+    def put(self, key: object, value: object):
+        self.map[key] = self.index
+        self.index += 1
+        self.map[value] = self.index
+        self.index += 1
+        self.lookup.append(id(value))
+        self.lookup.append(id(key))
+    
+
+    def get_value_by_key(self, key: object) -> object:
+        if key in self.map:
+            return ctypes.cast(self.lookup[self.map[key]], ctypes.py_object).value
+        else:
+            raise Exception("Value for the corresponding key not present in map!")
+    
+
+    def get_key_by_value(self, value: object) -> object:
+        if value in self.map:
+            return ctypes.cast(self.lookup[self.map[value]], ctypes.py_object).value
+        else:
+            raise Exception("Key for the corresponding value not present in map!")
+    
+    
+    def delete_key(self, key: object):
+        if key in self.map:
+            index = self.map[key]
+            value = self.get_value_by_key(key)
+            del self.map[key]
+            del self.map[value]
+            self.lookup.remove(index)
+            self.lookup.remove(index+1)
+        else:
+            raise Exception("Key not present in map!")
+    
+
+    def delete_value(self, value: object):
+        if value in self.map:
+            index = self.map[value]
+            key = self.get_key_by_value(value)
+            del self.map[value]
+            del self.map[key]
+            self.lookup.remove(index)
+            self.lookup.remove(index-1)
+        else:
+            raise Exception("Key not present in map!")
 
             
 
@@ -409,7 +468,7 @@ class ZNetwork:
         self.connect_set = set()
         self.socket_dict = {}
         self.connect_dict = {}
-        self.controllerid_net = BidirectionalDict()
+        self.controllerid_port = BidiDict()
         self.delmark = {}
         self.total_rounds = len(self.server_list) * MAJORITY
 
@@ -420,6 +479,10 @@ class ZNetwork:
         with open(config_file, "r") as config:
             for line in config:
                 self.server_list.append(line.strip())
+                self.controllerid_port.put()
+    
+
+
 
 
 
