@@ -363,6 +363,7 @@ be fine on their own, but since they all relate to connection tracking, I've put
 
 """
 MAJORITY_PERCENT = 0.51
+from time import sleep
 from random import randint
 from enum import Enum
 
@@ -407,7 +408,7 @@ class ZNetwork:
             for line in config:
                 port = line.strip()
                 self.server_list.append(port)
-                self.controllerID_port.put(port, cid)
+                self.controllerID_port[port] = cid
                 cid += 1
         
         # nothing is connected yet, fill the set with all ports/nodes
@@ -420,7 +421,7 @@ class ZNetwork:
         while len(self.socket_dict) < self.majority:
             try:
                 self._connect_clients()
-                asyncio.sleep(0.25)
+                sleep(1)
             except Exception as e:
                 print(f"Block Until Connected errored out: {str(e)}")
                 return False
@@ -462,12 +463,13 @@ class ZNetwork:
         return reply
     
 
-    def _connect_clients(self) -> Dict[str, object]:
+    async def _connect_clients(self) -> Dict[str, object]:
         diff_set = self.connect_set.difference(set(self.socket_dict.keys()))
 
         for port in diff_set:
             cid = self.controllerID_port[port]
             client_socket = ZNode(port, cid)
+            asyncio.create_task(client_socket.server_loop())
             
             # check the connection
             try:
@@ -542,8 +544,10 @@ class ZNetwork:
 async def main_network():
     try:
         znet = ZNetwork()
-        znet.block_until_connected()
+        znet.block_until_connected() # has to return all the server tasks
+        # await all the server tasks
         znet.check_for_new_connections()
+        print(f"connected nodes: {znet.socket_dict}")
     except Exception as e:
         print(f"Could not start network: {str(e)}")
 
@@ -554,19 +558,16 @@ async def main_node():
         node1 = ZNode("5252", "1")
         node2 = ZNode("5253", "2")
         
-        t1 = asyncio.create_task(node1.server_loop()) 
-        t2 = asyncio.create_task(node2.server_loop())
+        asyncio.create_task(node1.server_loop()) 
+        asyncio.create_task(node2.server_loop())
 
         # Test client socket, send a message to 5253
         node1.send_message("5253", "Mhello")
-        rep = await node1.recv_message()
+        rep = await node1.recv_message("5253")
         print(f"node1 to node2 reply: {str(rep)}")
         node2.send_message("5252", "Mhello")
-        rep = await node2.recv_message()
+        rep = await node2.recv_message("5252")
         print(f"node2 to node1 reply: {str(rep)}")
-
-        await t1
-        await t2
 
     except Exception as e:
         print(f"error starting server: {str(e)}")
@@ -574,6 +575,6 @@ async def main_node():
 
 
 if __name__ == "__main__":
-    # asyncio.run(main_node())
-    asyncio.run(main_network())
+    asyncio.run(main_node())
+    # asyncio.run(main_network())
     # test_bidi()
