@@ -12,7 +12,7 @@ are used to connect all the entities that participate in the election process.
         - socket_dict: ordered dict of port:Socket objects of all the nodes, irrespective of if they are active or not
         - connect_dict: ordered dict of port:NetState which tells me if each of the nodes in the socket_dict are active or not
         - controllerid_port: bidi dict of controller_ID:network_port of each of the nodes involved in this network
-        - delmark: dict that holds all the nodes which have expired sockets/sockets that aren't active and need to be cleaned/deleted
+        - delete_marker: dict that holds all the nodes which have expired sockets/sockets that aren't active and need to be cleaned/deleted
         - majority: the minimum number of nodes in the network that need to accept the new leader, currently set to 51%
         - total_rounds: the number of election rounds that are carried out, set to len(server_list) because every node elected as
         leader may fail the acceptance phase (worst case)
@@ -56,7 +56,7 @@ import zmq.asyncio
 from election import ael
 
 
-from typing import List
+from typing import List, Dict
 
 
 """
@@ -148,16 +148,18 @@ def main1():
         os._exit(1)
 """
 
+
 # Constants belonging to the ZNode class
 CONFIG_FILE = "server.config"
 NO_QUEUE = 1
 SO_LINGER = 0
 
 ACK = "ACK"
-NO = "NO"
-LEADOK = "LEADOK"
 DONTCARE = "DONTCARE"
+LEADOK = "LEADOK"
+NO = "NO"
 NONE = "NONE"
+PULSE = "PULSE"
 
 
 class ZNode:
@@ -168,8 +170,9 @@ class ZNode:
 
         self.server_socket = None
         self.client_sockets = {}
+        self.node_list = []
         
-        self.node_list = self._parse_configuration(CONFIG_FILE)
+        self._parse_configuration(CONFIG_FILE)
         self._create_client_sockets(self.server_port, self.node_list)
 
         self.async_election = ael
@@ -315,16 +318,27 @@ class ZNode:
             self.server_socket.close()
     
     
-    def send_message(self, node: str, message: str) -> str:
+    def send_message(self, node: str, message: str) -> bool:
         try:
             client_socket = self.client_sockets[node]
             client_socket.send_string(message)
-            return client_socket.recv_string()
+            return True
         except Exception as e:
             print(f"Could not send message from {node}: {message}, {str(e)}")
+        return False
+    
+
+    def recv_message(self, node: str) -> str:
+        try:
+            client_socket = self.client_sockets[node]
+            return client_socket.recv_string()
+        except Exception as e:
+            print(f"Could not recv message from {node}: {str(e)}")
+        return NONE
     
 
     def __delattr__(self):
+        self.server_socket.close()
         for client_sock in self.client_sockets:
             try:
                 client_sock.close()
@@ -343,278 +357,196 @@ of a node does not affect the process and it is fully fault tolerant.
 
 Over here, we read all the nodes from the config file and make a ZNode object for it, with its own
 controller ID and also insert this into the respective connection tracker mechanisms designed below.
-
-
+Again, we can make this a singleton class, since we need only one object of this. These functions would
+be fine on their own, but since they all relate to connection tracking, I've put them under this class.
 
 
 """
-from collections import OrderedDict
-import weakref
+MAJORITY_PERCENT = 0.51
+from random import randint
+from enum import Enum
+from bidi_dict import BidiDict
 
 
-MAJORITY =  0.51
-
-"""
-class BidiDict:
-
-
-    def __init__(self):
-        self.forward = OrderedDict()
-        self.reverse = OrderedDict()
-    
-
-    def put(self, key: object, value: object):
-        self.forward[key] = value
-        self.reverse[value] = key
-    
-
-    def get_key(self, key: object) -> object:
-        if key in self.forward:
-            return self.forward[key]
-        else:
-            raise Exception("Value for the corresponding key not present in map!")
-    
-
-    def get_value(self, value: object) -> object:
-        if value in self.reverse:
-            return self.reverse[value]
-        else:
-            raise Exception("Key for the corresponding value not present in map!")
-    
-    
-    def delete_key(self, key: object):
-        if key in self.forward:
-            value = self.forward[key]
-            del self.forward[key]
-            del self.reverse[value]
-        else:
-            raise Exception("Key not present in map!")
-    
-
-    def delete_value(self, value: object):
-        if value in self.reverse:
-            key = self.reverse[value]
-            del self.reverse[value]
-            del self.forward[key]
-        else:
-            raise Exception("Key not present in map!")
-"""
-class String:
-    
-
-    def __init__(self, s):
-        self.str = s
-    
-
-    def access(self):
-        return self.str
-    
-
-    def change(self, s):
-        self.str = s
-    
-
-    def __repr__(self):
-        return self.str
-
-MAX_INDEX = 10
-
-
-class BidiDict:
-    """
-    A new data structure that I made to hold the connection: controllerID associations.
-    """
-
-
-    def __init__(self):
-        self.map = {}
-        self.lookup = []
-        self.index = 0
-    
-
-    def put(self, key: object, value: object):
-        self.map[key] = self.index
-        self.index += 1
-        self.map[value] = self.index
-        self.index += 1
-        self.lookup.append(weakref.ref(value))
-        self.lookup.append(weakref.ref(key))
-        
-        if len(self.lookup) > MAX_INDEX:
-            self._reindex()
-    
-
-    def get_value_using_key(self, key: object) -> object:
-        if key in self.map:
-            return self.lookup[self.map[key]]()
-        else:
-            raise Exception("Value for the corresponding key not present in map!")
-    
-
-    def get_key_using_value(self, value: object) -> object:
-        if value in self.map:
-            return self.lookup[self.map[value]]()
-        else:
-            raise Exception("Key for the corresponding value not present in map!")
-    
-    
-    def delete_using_key(self, key: object):
-        if key in self.map:
-            index = self.map[key]
-            value = self.get_value_using_key(key)
-            del self.map[key]
-            del self.map[value]
-        else:
-            raise Exception("Key not present in map!")
-        
-        if len(self.lookup) > MAX_INDEX:
-            self._reindex()
-    
-
-    def delete_using_value(self, value: object):
-        if value in self.map:
-            index = self.map[value]
-            key = self.get_key_using_value(value)
-            del self.map[value]
-            del self.map[key]
-        else:
-            raise Exception("Key not present in map!")
-        
-        if len(self.lookup) > MAX_INDEX:
-            self._reindex()
-    
-
-    def _reindex(self):
-        lookup_new = []
-        # print("before reindex: ", str(self.map))
-
-        for k, v in self.map.items():
-            # print("key val", k, v)
-            lookup_new.append(self.lookup[v])
-        
-        index = 0
-        for k in self.map.keys():
-            self.map[k] = index
-            index += 1
-
-        # print("reindexed: ", str(self.map))
-
-        self.lookup.clear()
-        self.lookup = [ x for x in lookup_new ]
-        del lookup_new
-    
-
-    def __repr__(self):
-        return str(self.map)
-
-
-def test_bidi():
-    # put in bidi map
-    bd = BidiDict()
-
-    a = String("a")
-    b = String("b")
-    c = String("c")
-    d = String("d")
-    e = String("e")
-    f = String("f")
-
-    bd.put(a, b)
-    bd.put(c, d)
-    bd.put(e, f)
-
-    # get using key
-    print("get a: ", bd.get_value_using_key(a))
-    print("get c: ", bd.get_value_using_key(c))
-    print("get e: ", bd.get_value_using_key(e))
-
-    print("map: ", str(bd))
-
-    # get using value
-    print("get b: ", bd.get_key_using_value(b))
-    print("get d: ", bd.get_key_using_value(d))
-
-    print("map: ", str(bd))
-
-    # delete using key
-    print("delete c: ", bd.delete_using_key(c))
-
-    print("map: ", str(bd))
-
-    # delete using value
-    print("delete f: ", bd.delete_using_key(f))
-
-    print("map: ", str(bd))
-    print("lookup: ", str(bd.lookup))
-
-
-    A = String("A")
-    B = String("B")
-    C = String("C")
-    D = String("D")
-    E = String("E")
-    F = String("F")
-
-    # test reindex
-    bd.put(B, A)
-    bd.put(D, C)
-
-    print("map: ", str(bd))
-    print("lookup: ", str(bd.lookup))
-
-    bd.put(F, E)
-
-    print("map: ", str(bd))
-    print("lookup: ", str(bd.lookup))
-
-    # get using key
-    print("get a: ", bd.get_value_using_key(B))
-    print("get c: ", bd.get_value_using_key(D))
-    print("get e: ", bd.get_value_using_key(F))
-
-    print("map: ", str(bd))
-
-    # get using value
-    print("get b: ", bd.get_key_using_value(A))
-    print("get d: ", bd.get_key_using_value(C))
-
-    print("map: ", str(bd))
-
-    # delete using key
-    print("delete c: ", bd.delete_using_key(F))
-
-    print("map: ", str(bd))
-
-    # delete using value
-    print("delete f: ", bd.delete_using_key(C))
-
-    print("map: ", str(bd))
-
+class NetState(Enum):
+    ON = 1
+    OFF = 2
 
 
 class ZNetwork:
 
 
     def __init__(self):
+        
+        # list of all the nodes
         self.server_list = []
+        
+        # set of nodes which are pending connection
         self.connect_set = set()
+
+        # both are the same, one holds port:socket_object, another 
+        # port:state(on/off), doing this for easy lookup without 
+        # needing to store tuples and index them (performant)
         self.socket_dict = {}
         self.connect_dict = {}
-        self.controllerid_port = BidiDict()
-        self.delmark = {}
-        self.total_rounds = len(self.server_list) * MAJORITY
 
+        # this is to lookup the port/node for a particular controllerID
+        # or if you know the port/node number to lookup the corresponding controllerID
+        self.controllerID_port = BidiDict()
+
+        # to store expired connections that can be cleaned/deleted
+        self.delete_marker = {}
+
+        # max number of election rounds that take place
+        self.total_rounds = len(self.server_list) 
+        self.majority = self.total_rounds * MAJORITY_PERCENT
         self._parse_server_config(CONFIG_FILE)
     
-
+    
     def _parse_server_config(self, config_file: str):
         with open(config_file, "r") as config:
+            cid = 1
             for line in config:
-                self.server_list.append(line.strip())
-                self.controllerid_port.put()
+                port = line.strip()
+                self.server_list.append(port)
+                self.controllerID_port.put(port, cid)
+                cid += 1
+        
+        # nothing is connected yet, fill the set with all ports/nodes
+        self.connect_set = set([ port for port in self.server_list ])
+    
+
+    def block_until_connected(self) -> bool:
+        self._clean_state()
+
+        while len(self.socket_dict) < self.majority:
+            try:
+                self._connect_clients()
+                asyncio.sleep(0.25)
+            except Exception as e:
+                print(f"Block Until Connected errored out: {str(e)}")
+                return False
+        
+        # we call update again here, just to be sure
+        self._update_connection_dict()
+        return True
+    
+    
+    def _clean_state(self):
+        for port, socket in self.socket_dict.items():
+            try:
+                del socket
+                self.delete_marker.append(port)
+            except Exception as e:
+                print(f"Could not delete client socket: {str(e)}")
+        
+        for port in self.delete_marker:
+            del self.socket_dict[port]
+        
+        self.socket_dict = {}
+        self.connect_dict = {}
+
+        self.connect_set = set()
+
+        self.delete_marker = []
+
+    
+    def check_for_new_connections(self):
+        self._expire_old_connections()
+        self.connect_set = set()
+        self._connect_clients()
 
 
-async def main():
+    def _connect_clients(self) -> Dict[str, object]:
+        diff_set = self.connect_set.difference(set(self.socket_dict.keys()))
+
+        for port in diff_set:
+            cid = self.controllerID_port[port]
+            client_socket = ZNode(port, cid)
+            
+            # check the connection
+            try:
+                # send a pulse to check for connectivity
+                client_sock.send_message(port, PULSE)
+                reply = await client_sock.recv_message()
+
+                # verify the ack, and add it to the socket dict
+                # and the connect dict, if not, delete the socket
+                if reply == ACK:
+                    if port not in self.socket_dict:
+                        # store the connection
+                        self.socket_dict[port] = client_sock
+                    else:
+                        del client_socket
+                else:
+                    del client_sock
+            
+            except Exception as e:
+                print(f"Could not test/verify that the node {port} was connected: {str(e)}")
+                del client_sock
+        
+        # delete already connected connections from connect_set
+        for port in self.connect_dict.keys():
+            self.connect_set.remove(port)
+        
+        self._update_connection_dict()
+        return self.connect_dict
+    
+
+    def _expire_old_connections(self) -> Dict[str, object]:
+        for port, client_socket in self.socket_dict.items():
+            try:
+                rand_index = randint(0, len(self.server_list) - 1)
+                random_port = self.server_list[rand_index]
+                client_socket.send_message(PULSE)
+                reply = client_socket.recv_message()
+
+                if reply != ACK:
+                    del client_socket
+                    self.delete_marker.append(port)
+            
+            except Exception as e:
+                print(f"Bad reply/no response from the client {port} : {str(e)}")
+                self.delete_marker.append(port)
+        
+        try:
+            for port in self.delete_marker:
+                # ensure that the socket is closed
+                if port in self.socket_dict:
+                    client_sock = self.socket_dict[port]
+                    del client_sock
+                del self.socket_dict[port]
+            
+        except Exception as e:
+            print(f"Error while deleting old connections: {str(e)}")
+        
+        self._update_connection_dict()
+        return self.connect_dict
+    
+
+    def _update_connection_dict(self):
+        # clear the whole map
+        self.connect_dict.clear()
+
+        # mark all the connections to be made as OFF
+        for port in self.connect_set:
+            self.connect_dict(port, NetState.OFF)
+        
+        # mark all the connections which have been made as ON
+        for port in self.socket_dict.keys():
+            self.connect_dict(port, NetState.ON)
+
+
+async def main_network():
+    try:
+        znet = ZNetwork()
+        znet.block_until_connected()
+        znet.check_for_new_connections()
+    except Exception as e:
+        print(f"Could not start network: {str(e)}")
+
+
+async def main_node():
     try:
         # Test server loop run 5252, 5253
         node1 = ZNode("5252", "1")
@@ -624,9 +556,11 @@ async def main():
         t2 = asyncio.create_task(node2.server_loop())
 
         # Test client socket, send a message to 5253
-        rep = await node1.send_message("5253", "Mhello")
+        node1.send_message("5253", "Mhello")
+        rep = await node1.recv_message()
         print(f"node1 to node2 reply: {str(rep)}")
-        rep = await node2.send_message("5252", "Mhello")
+        node2.send_message("5252", "Mhello")
+        rep = await node2.recv_message()
         print(f"node2 to node1 reply: {str(rep)}")
 
         await t1
@@ -638,5 +572,6 @@ async def main():
 
 
 if __name__ == "__main__":
-    # asyncio.run(main())
-    test_bidi()
+    # asyncio.run(main_node())
+    asyncio.run(main_network())
+    # test_bidi()
