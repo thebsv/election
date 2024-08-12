@@ -365,7 +365,6 @@ be fine on their own, but since they all relate to connection tracking, I've put
 MAJORITY_PERCENT = 0.51
 from random import randint
 from enum import Enum
-from bidi_dict import BidiDict
 
 
 class NetState(Enum):
@@ -390,9 +389,8 @@ class ZNetwork:
         self.socket_dict = {}
         self.connect_dict = {}
 
-        # this is to lookup the port/node for a particular controllerID
-        # or if you know the port/node number to lookup the corresponding controllerID
-        self.controllerID_port = BidiDict()
+        # this is to lookup the corresponding controllerID for a port/node
+        self.controllerID_port = {}
 
         # to store expired connections that can be cleaned/deleted
         self.delete_marker = {}
@@ -457,6 +455,13 @@ class ZNetwork:
         self._connect_clients()
 
 
+    async def test_connection(self, port: str, message: str) -> str:
+        # send a pulse to check for connectivity
+        client_sock.send_message(port, PULSE)
+        reply = await client_sock.recv_message()
+        return reply
+    
+
     def _connect_clients(self) -> Dict[str, object]:
         diff_set = self.connect_set.difference(set(self.socket_dict.keys()))
 
@@ -466,9 +471,7 @@ class ZNetwork:
             
             # check the connection
             try:
-                # send a pulse to check for connectivity
-                client_sock.send_message(port, PULSE)
-                reply = await client_sock.recv_message()
+                reply = self.test_connection()
 
                 # verify the ack, and add it to the socket dict
                 # and the connect dict, if not, delete the socket
@@ -498,8 +501,7 @@ class ZNetwork:
             try:
                 rand_index = randint(0, len(self.server_list) - 1)
                 random_port = self.server_list[rand_index]
-                client_socket.send_message(PULSE)
-                reply = client_socket.recv_message()
+                reply = self.test_connection()
 
                 if reply != ACK:
                     del client_socket
