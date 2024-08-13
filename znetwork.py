@@ -54,99 +54,7 @@ import zmq.asyncio
 # importing the object from the election class, since it is a singleton
 # singleton DI of higher level class -> into N lower level classes (that's the pattern)
 from election import ael
-
-
 from typing import List, Dict, Tuple
-
-
-"""
-import concurrent.futures
-class ZNode1:
-
-    def __init__(self, send_timeout: int, so_linger: int, server_port: str) -> None:
-        self.send_timeout = send_timeout
-        self.so_linger = so_linger
-        self.server_port = server_port
-
-        self.server_socket = None
-        self.client_sockets = {}
-        
-        self.node_list = self._parse_configuration(CONFIG_FILE)
-        print("servers: ", self.node_list)
-        self._create_client_sockets(self.server_port, self.node_list)
-
-    
-    def _parse_configuration(self, config_file: str) -> List[str]:
-        servers = []
-        with open(config_file, "r") as config:
-            for line in config:
-                line = line.strip()
-                servers.append(line)
-        return servers
-
-
-    def _create_client_sockets(self, server_port: str, node_list: List[str]) -> None:
-        context = zmq.Context()
-        for node in node_list:
-            if node != server_port:
-                client_socket = context.socket(zmq.REQ)
-                client_socket.connect(f"tcp://localhost:{node}")
-                self.client_sockets[node] = client_socket
-    
-    
-    def server_loop(self) -> None:
-        context = zmq.Context()
-        self.server_socket = context.socket(zmq.REP)
-        self.server_socket.bind(f"tcp://*:{self.server_port}")
-        print(f"Server started on port: {str(self.server_port)}")
-
-        try:
-            while True:
-                try:
-                    message = self.server_socket.recv_string()
-                    print(f"Received message: {message}")
-                except Exception as e:
-                    print(f"Exception: {str(e)}")
-
-                try:
-                    self.server_socket.send_string("ACK")
-                except Exception as e:
-                    print(f"Exception: {str(e)}")
-        except Exception as e:
-            print(f"Exiting server... {str(e)}")
-    
-    
-    def send_message(self, node: str, message: str) -> str:
-        try:
-            client_socket = self.client_sockets[node]
-            client_socket.send(message.encode('utf-8'))
-            return client_socket.recv_string()
-        except Exception as e:
-            print(f"Could not send message from {node}: {message}, {str(e)}")
-    
-
-def main1():
-    try:
-        # Test server loop run 5252, 5253
-        node1 = ZNode1(1, 1, "5252")
-        node2 = ZNode1(1, 1, "5253")
-        
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-            futures = { 
-                executor.submit(node1.server_loop) : node1, 
-                executor.submit(node2.server_loop): node2
-            }
-
-            # Test client socket, send a message to 5253
-            rep = node1.send_message("5253", "hello")
-            print(f"node1 to node2 reply: {str(rep)}")
-            rep = node2.send_message("5252", "hello")
-            print(f"node2 to node1 reply: {str(rep)}")
-
-    except Exception as e:
-        print(f"error starting server: {str(e)}")
-        os._exit(1)
-"""
 
 
 # Constants belonging to the ZNode class
@@ -356,7 +264,6 @@ be fine on their own, but since they all relate to connection tracking, I've put
 
 """
 from enum import Enum
-from gc import collect
 
 
 class NetState(Enum):
