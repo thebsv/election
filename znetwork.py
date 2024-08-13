@@ -300,7 +300,7 @@ class ZNode:
 
                 try:
                     message = await self.server_socket.recv_string()
-                    print(f"Received message: {message}")
+                    # print(f"Received message: {message}")
                 except Exception as e:
                     print(f"Exception: {str(e)}")
 
@@ -528,7 +528,7 @@ class ZNetwork:
                 if port in self.socket_dict:
                     sock = self.socket_dict[port]
                     del sock
-                del self.socket_dict[port]
+                    del self.socket_dict[port]
             
         except Exception as e:
             print(f"Error while deleting old connections: {str(e)}")
