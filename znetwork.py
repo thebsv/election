@@ -554,11 +554,10 @@ async def main_network():
     try:
         znet = ZNetwork()
         _, tasks = await znet.block_until_connected()
-        # await all the server tasks
-        ret, _ = await znet.check_for_new_connections()
-        print(f"connected nodes: {ret}")
+
         for task in tasks:
             await task
+        
     except Exception as e:
         print(f"Could not start network: {str(e)}")
 
