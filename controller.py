@@ -21,7 +21,9 @@ import threading
 
 
 class Controller:
-    pass
+
+    def __inject_election_priorities(self, priorities: List[str]):
+        pass
 
 
 controller = Controller()

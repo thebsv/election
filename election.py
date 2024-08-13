@@ -1,13 +1,13 @@
 """
 This module implements a simple self healing leader election algorithm which is a modded version
-of the RAFT distributed consensus algorithm, which is fully tolerant.
+of the RAFT distributed consensus algorithm, which is fully fault tolerant upto N nodes.
 
 I added a constraint such that a majority variable is used and is set to 51% of acceptors that need 
 to accept this node as the new leader before it is set to be so. The number of total rounds for election will 
 also be set equal to the total number of nodes participating in the election, so that the failure
 of a node does not affect the process and it is fully fault tolerant.
 
-A failure dectector is also implemented which sends periodic heartbeats (PULSE messages) from each of the
+A failure detector is also implemented which sends periodic heartbeats (PULSE messages) from each of the
 FOLLOWERS to the LEADER, and checks if the LEADER successfully responds to a majority of them. If this fails 
 it indicates that the LEADER is dead, and the entire system is switched back to the ELECT state to pick a new LEADER
 
@@ -50,8 +50,36 @@ __version__ = "1.1.0"
 import logging
 import os
 
+from typing import List
+
 
 MAJORITY_PERCENT = 0.51
+
+
+# Message that can be sent as is
+NONE = "NONE"
+LEADER = NONE
+TEMP_LEADER = NONE
+ACK = "ACK"
+PULSE = "PULSE"
+YOU = "YOU?"
+NO = "NO"
+LEADOK = "LEADOK"
+
+
+# Messages to be appended with a timestamp
+IWON = "IWON "
+SETLEAD = "SETLEAD "
+LEADERMSG = "LEADER "
+HEARTBEAT = "HEARTBEAT "
+
+
+from enum import Enum
+class ElectionState:
+    CONNECT = 1
+    ELECT = 2
+    COORDINATE = 3
+    SPIN = 4
 
 
 class AsyncElection:
@@ -69,6 +97,10 @@ class AsyncElection:
         pass
 
 
+    def max_raft():
+        pass
+    
+    
     def get_temp_leader(self) -> str:
         pass
     

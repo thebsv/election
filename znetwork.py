@@ -52,7 +52,7 @@ import zmq
 import zmq.asyncio
 
 # importing the object from the election class, since it is a singleton
-# singleton DI of higher level class -> into N lower level classes (that's the pattern)
+# singleton object + DI of higher level class -> into N lower level classes
 from election import ael
 from typing import List, Dict, Tuple
 
@@ -253,14 +253,56 @@ class ZNode:
                 print(f"Error closing client socket: {str(e)}")
 
 
+async def main_node():
+    try:
+        # Test server loop run 5252, 5253
+        node1 = ZNode("5252", "1")
+        node2 = ZNode("5253", "2")
+        
+        asyncio.create_task(node1.server_loop()) 
+        asyncio.create_task(node2.server_loop())
+
+        # Test client socket, send a message to 5253
+        node1.send_message("5253", "Mhello")
+        rep = await node1.recv_message("5253")
+        print(f"node1 to node2 reply: {str(rep)}")
+        node2.send_message("5252", "Mhello")
+        rep = await node2.recv_message("5252")
+        print(f"node2 to node1 reply: {str(rep)}")
+
+    except Exception as e:
+        print(f"error starting server: {str(e)}")
+        os._exit(1)
+
+
 """
 The network uses the node class, and it implements convenience functions for the
 election class that will maintain persistent mesh connections between all the nodes.
 
-Over here, we read all the nodes from the config file and make a ZNode object for it, with its own
+Over here, we read all the nodes from the config file and make a ZNode object for it, with its own 
 controller ID and also insert this into the respective connection tracker mechanisms designed below.
+
 Again, we can make this a singleton class, since we need only one object of this. These functions would
 be fine on their own, but since they all relate to connection tracking, I've put them under this class.
+
+In the above, we tightly coupled the election and ZNode objects, next we will export this class
+which is the network through which messages are sent. 
+
+The election class interacts with both the node class and the network class. It does command and 
+control through the network class, and its state gets modified by the N node classes, specifically 
+only the server sockets of the nodes during the election.
+
+Therefore, there is very tight coupling between both the network and the node.
+
+There is loose coupling between the node and the election algorithm, because if you wanted to 
+change the election logic, you can do that independently by not touching the getters and setters of 
+the election class. The election class only interacts with the node's server socket, and other parts of 
+the node are largely untouched.
+
+There is loose coupling between the network and the election algorithm, the network is just used. The
+command and control still happens from the election class to the network, and this does not happen in the
+reverse direction.
+
 
 """
 from enum import Enum
@@ -314,6 +356,36 @@ class ZNetwork:
                 cid += 1
     
 
+    def send_message(self, to_node: str, message: str) -> bool:
+        # This send message function is for the higher level classes to access,
+        # and send messages through the network
+        try:
+            client_socket = self.socket_dict[to_node]
+            client_socket.send_string(message)
+            return True
+        except Exception as e:
+            print(f"Could not send message from {to_node}: {message}, {str(e)}")
+        return False
+    
+
+    def recv_message(self, from_node: str) -> str:
+        # This recv message function is for the higher level classes to access,
+        # and receive messages from the network
+        try:
+            client_socket = self.socket_dict[from_node]
+            return client_socket.recv_string()
+        except Exception as e:
+            print(f"Could not recv message from {from_node}: {str(e)}")
+        return NONE
+
+
+    async def check_for_new_connections(self) -> Dict[str, object]:
+        _ = await self._expire_old_connections()
+        self.connect_set = set([ port for port in self.server_list ])
+        ret = await self._connect_clients()
+        return ret
+
+
     async def block_until_connected(self) -> List[object]:
         await self._clean_state()
 
@@ -350,15 +422,6 @@ class ZNetwork:
         self.connect_set = set([ port for port in self.server_list ])
 
         self.delete_marker = []
-
-        self.server_tasks = []
-
-    
-    async def check_for_new_connections(self) -> Dict[str, object]:
-        _ = await self._expire_old_connections()
-        self.connect_set = set([ port for port in self.server_list ])
-        ret = await self._connect_clients()
-        return ret
     
     
     async def _connect_clients(self) -> Dict[str, object]:
@@ -377,7 +440,7 @@ class ZNetwork:
             # check the connection
             try:
                 # send a pulse to check for connectivity
-                await client_sock.node_send_message(port, PULSE)
+                client_sock.node_send_message(port, PULSE)
                 reply = await client_sock.node_recv_message(port)
 
                 # print(f"reply: {reply}")
@@ -409,7 +472,7 @@ class ZNetwork:
         for port, sock in self.socket_dict.items():
             try:                
                 # send a pulse to self to check for connectivity
-                await sock.node_send_message(port, PULSE)
+                sock.node_send_message(port, PULSE)
                 reply = await sock.node_recv_message(port)
 
                 if reply != ACK:
@@ -448,38 +511,15 @@ class ZNetwork:
             self.connect_dict[port] = NetState.ON
 
 
-async def main_network():
+async def main_network(znet: object, task_group: object):
     try:
-        async with asyncio.TaskGroup() as task_group:
-            znet = ZNetwork(task_group)
+        async with task_group:
             await znet.block_until_connected()
     except Exception as e:
         print(f"Could not start network: {str(e)}")
 
-
-async def main_node():
-    try:
-        # Test server loop run 5252, 5253
-        node1 = ZNode("5252", "1")
-        node2 = ZNode("5253", "2")
-        
-        asyncio.create_task(node1.server_loop()) 
-        asyncio.create_task(node2.server_loop())
-
-        # Test client socket, send a message to 5253
-        node1.send_message("5253", "Mhello")
-        rep = await node1.recv_message("5253")
-        print(f"node1 to node2 reply: {str(rep)}")
-        node2.send_message("5252", "Mhello")
-        rep = await node2.recv_message("5252")
-        print(f"node2 to node1 reply: {str(rep)}")
-
-    except Exception as e:
-        print(f"error starting server: {str(e)}")
-        os._exit(1)
-
-
 if __name__ == "__main__":
     # asyncio.run(main_node())
-    asyncio.run(main_network())
-    # test_bidi()
+    task_group = asyncio.TaskGroup()
+    znet = ZNetwork(task_group)
+    asyncio.run(main_network(znet, task_group))
