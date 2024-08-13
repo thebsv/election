@@ -440,7 +440,7 @@ class ZNetwork:
             # check the connection
             try:
                 # send a pulse to check for connectivity
-                client_sock.node_send_message(port, PULSE)
+                await client_sock.node_send_message(port, PULSE)
                 reply = await client_sock.node_recv_message(port)
 
                 # print(f"reply: {reply}")
@@ -472,7 +472,7 @@ class ZNetwork:
         for port, sock in self.socket_dict.items():
             try:                
                 # send a pulse to self to check for connectivity
-                sock.node_send_message(port, PULSE)
+                await sock.node_send_message(port, PULSE)
                 reply = await sock.node_recv_message(port)
 
                 if reply != ACK:
@@ -511,15 +511,16 @@ class ZNetwork:
             self.connect_dict[port] = NetState.ON
 
 
-async def main_network(znet: object, task_group: object):
+async def main_network():
     try:
-        async with task_group:
+        async with asyncio.TaskGroup() as task_group:
+            znet = ZNetwork(task_group)
             await znet.block_until_connected()
     except Exception as e:
         print(f"Could not start network: {str(e)}")
 
+
 if __name__ == "__main__":
     # asyncio.run(main_node())
-    task_group = asyncio.TaskGroup()
-    znet = ZNetwork(task_group)
-    asyncio.run(main_network(znet, task_group))
+    asyncio.run(main_network())
+    # test_bidi()
