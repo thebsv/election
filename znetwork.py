@@ -317,22 +317,22 @@ class ZNode:
             self.server_socket.close()
     
     
-    def send_message(self, node: str, message: str) -> bool:
+    def node_send_message(self, to_node: str, message: str) -> bool:
         try:
-            client_socket = self.client_sockets[node]
+            client_socket = self.client_sockets[to_node]
             client_socket.send_string(message)
             return True
         except Exception as e:
-            print(f"Could not send message from {node}: {message}, {str(e)}")
+            print(f"Could not send message from {to_node}: {message}, {str(e)}")
         return False
     
 
-    def recv_message(self, node: str) -> str:
+    def node_recv_message(self, from_node: str) -> str:
         try:
-            client_socket = self.client_sockets[node]
+            client_socket = self.client_sockets[from_node]
             return client_socket.recv_string()
         except Exception as e:
-            print(f"Could not recv message from {node}: {str(e)}")
+            print(f"Could not recv message from {from_node}: {str(e)}")
         return NONE
     
 
@@ -362,7 +362,6 @@ be fine on their own, but since they all relate to connection tracking, I've put
 
 """
 MAJORITY_PERCENT = 0.51
-from time import sleep
 from enum import Enum
 from gc import collect
 
@@ -375,7 +374,7 @@ class NetState(Enum):
 class ZNetwork:
 
 
-    def __init__(self):
+    def __init__(self, task_group: object):
         
         # list of all the nodes
         self.server_list = []
@@ -401,9 +400,14 @@ class ZNetwork:
         # max number of election rounds that take place
         self.total_rounds = len(self.server_list) 
         self.majority = self.total_rounds * MAJORITY_PERCENT
+
+        # parse the config file for the server ports
         self._parse_server_config(CONFIG_FILE)
-    
-    
+
+        # hold the asyncio task group to spawn server loops
+        self.task_group = task_group
+
+
     def _parse_server_config(self, config_file: str):
         with open(config_file, "r") as config:
             cid = 1
@@ -413,29 +417,28 @@ class ZNetwork:
                 self.controllerID_port[port] = cid
                 cid += 1
     
-    
 
     async def block_until_connected(self) -> List[object]:
-        self._clean_state()
+        await self._clean_state()
 
         # nothing is connected yet, fill the set with all ports/nodes
         self.connect_set = set([ port for port in self.server_list ])
 
-        while len(self.socket_dict) >= self.majority:
+        while True:
             try:
                 _, server_tasks = await self.check_for_new_connections()
-                sleep(0.25)
+                asyncio.sleep(0.001)
                 collect(2)
             except Exception as e:
                 print(f"Block Until Connected errored out: {str(e)}")
                 return False
         
         # we call update again here, just to be sure
-        self._update_connection_dict()
+        await self._update_connection_dict()
         return server_tasks
     
     
-    def _clean_state(self):
+    async def _clean_state(self):
         for port, socket in self.socket_dict.items():
             try:
                 del socket
@@ -456,14 +459,14 @@ class ZNetwork:
         self.server_tasks = []
 
     
-    async def check_for_new_connections(self) -> Tuple[Dict[str, object], List[object]]:
+    async def check_for_new_connections(self) -> Dict[str, object]:
         _ = await self._expire_old_connections()
         self.connect_set = set([ port for port in self.server_list ])
         ret = await self._connect_clients()
         return ret
     
     
-    async def _connect_clients(self) -> Tuple[Dict[str, object], List[object]]:
+    async def _connect_clients(self) -> Dict[str, object]:
         diff_set = self.connect_set.difference(set(self.socket_dict.keys()))
         print(f"diff_set: ", str(diff_set))
 
@@ -471,16 +474,16 @@ class ZNetwork:
         for port in diff_set:
             cid = self.controllerID_port[port]
             client_sock = ZNode(port, cid)
-            t1 = asyncio.create_task(client_sock.server_loop())
-            self.server_tasks.append(t1)
+            self.task_group.create_task(client_sock.server_loop())
 
             print(f"socket: {client_sock.__dict__}")
+            print(f"controller ID: {client_sock.controller_id}")
             
             # check the connection
             try:
                 # send a pulse to check for connectivity
-                client_sock.send_message(port, PULSE)
-                reply = await client_sock.recv_message(port)
+                await client_sock.node_send_message(port, PULSE)
+                reply = await client_sock.node_recv_message(port)
 
                 # print(f"reply: {reply}")
 
@@ -503,16 +506,16 @@ class ZNetwork:
         for port in self.connect_dict.keys():
             self.connect_set.remove(port)
         
-        self._update_connection_dict()
-        return (self.connect_dict, self.server_tasks)
+        await self._update_connection_dict()
+        return self.connect_dict
     
 
     async def _expire_old_connections(self) -> Dict[str, object]:
         for port, sock in self.socket_dict.items():
             try:                
                 # send a pulse to self to check for connectivity
-                sock.send_message(port, PULSE)
-                reply = await sock.recv_message(port)
+                await sock.node_send_message(port, PULSE)
+                reply = await sock.node_recv_message(port)
 
                 if reply != ACK:
                     del sock
@@ -533,11 +536,11 @@ class ZNetwork:
         except Exception as e:
             print(f"Error while deleting old connections: {str(e)}")
         
-        self._update_connection_dict()
+        await self._update_connection_dict()
         return self.connect_dict
     
 
-    def _update_connection_dict(self):
+    async def _update_connection_dict(self):
         # clear the whole map
         self.connect_dict.clear()
 
@@ -552,12 +555,9 @@ class ZNetwork:
 
 async def main_network():
     try:
-        znet = ZNetwork()
-        _, tasks = await znet.block_until_connected()
-
-        for task in tasks:
-            await task
-        
+        async with asyncio.TaskGroup() as task_group:
+            znet = ZNetwork(task_group)
+            await znet.block_until_connected()
     except Exception as e:
         print(f"Could not start network: {str(e)}")
 
