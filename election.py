@@ -1,8 +1,11 @@
 """
 This module implements a simple self healing leader election algorithm which is a modded version
-of the RAFT distributed consensus algorithm, which is fully tolerant. I added a constraint such that
-AT LEAST 51% of the Nodes participating in the election must be connected and remain connected throughout
-the election process, and after, so that we always have a majority acceptor set
+of the RAFT distributed consensus algorithm, which is fully tolerant.
+
+I added a constraint such that a majority variable is used and is set to 51% of acceptors that need 
+to accept this node as the new leader before it is set to be so. The number of total rounds for election will 
+also be set equal to the total number of nodes participating in the election, so that the failure
+of a node does not affect the process and it is fully fault tolerant.
 
 A failure dectector is also implemented which sends periodic heartbeats (PULSE messages) from each of the
 FOLLOWERS to the LEADER, and checks if the LEADER successfully responds to a majority of them. If this fails 
@@ -46,6 +49,9 @@ __version__ = "1.1.0"
 
 import logging
 import os
+
+
+MAJORITY_PERCENT = 0.51
 
 
 class AsyncElection:

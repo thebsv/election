@@ -349,19 +349,12 @@ class ZNode:
 The network uses the node class, and it implements convenience functions for the
 election class that will maintain persistent mesh connections between all the nodes.
 
-A majority variable is used and is set to 51% of acceptors that need to accept this node
-as the new leader before it is set to be so. The number of total rounds for election will 
-also be set equal to the total number of nodes participating in the election, so that the failure
-of a node does not affect the process and it is fully fault tolerant.
-
 Over here, we read all the nodes from the config file and make a ZNode object for it, with its own
 controller ID and also insert this into the respective connection tracker mechanisms designed below.
 Again, we can make this a singleton class, since we need only one object of this. These functions would
 be fine on their own, but since they all relate to connection tracking, I've put them under this class.
 
-
 """
-MAJORITY_PERCENT = 0.51
 from enum import Enum
 from gc import collect
 
@@ -397,10 +390,6 @@ class ZNetwork:
         # to hold all the task objects created for each server loop
         self.server_tasks = []
 
-        # max number of election rounds that take place
-        self.total_rounds = len(self.server_list) 
-        self.majority = self.total_rounds * MAJORITY_PERCENT
-
         # parse the config file for the server ports
         self._parse_server_config(CONFIG_FILE)
 
@@ -427,8 +416,7 @@ class ZNetwork:
         while True:
             try:
                 _, server_tasks = await self.check_for_new_connections()
-                asyncio.sleep(0.001)
-                collect(2)
+                asyncio.sleep(0)
             except Exception as e:
                 print(f"Block Until Connected errored out: {str(e)}")
                 return False
